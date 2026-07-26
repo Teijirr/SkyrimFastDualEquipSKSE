@@ -1,38 +1,138 @@
 #include "log.h"
+#include <unordered_set>
 
+namespace FastDualEquip
+{
+    inline std::unordered_set<RE::FormID> g_dualEquippedForms;
+
+    class EquipEventHandler : public RE::BSTEventSink<RE::TESEquipEvent>
+    {
+    public:
+        static EquipEventHandler* GetSingleton()
+        {
+            static EquipEventHandler singleton;
+            return &singleton;
+        }
+
+        RE::BSEventNotifyControl ProcessEvent(const RE::TESEquipEvent* a_event, RE::BSTEventSource<RE::TESEquipEvent>*) override
+        {
+            if (!a_event) {
+                return RE::BSEventNotifyControl::kContinue;
+            }
+
+            auto player = RE::PlayerCharacter::GetSingleton();
+            if (!player) {
+                return RE::BSEventNotifyControl::kContinue;
+            }
+
+            auto actorRef = a_event->actor.get();
+            if (!actorRef || actorRef != player) {
+                return RE::BSEventNotifyControl::kContinue;
+            }
+
+            auto formID = a_event->baseObject;
+            auto form = RE::TESForm::LookupByID(formID);
+            if (!form) {
+                return RE::BSEventNotifyControl::kContinue;
+            }
+
+            // Get what's currently held in right (slot 0) and left (slot 1) hands
+            auto rightBound = player->GetEquippedObject(false);
+            auto leftBound = player->GetEquippedObject(true);
+
+            // If both hands now hold the same FormID, add it to the set
+            if (rightBound && leftBound && rightBound->GetFormID() == leftBound->GetFormID()) {
+                g_dualEquippedForms.insert(rightBound->GetFormID());
+            }
+
+            // If an item in our record is equipped and not yet dual-equipped
+            if (a_event->equipped && g_dualEquippedForms.contains(formID)) {
+
+                bool isRightMatching = (rightBound && rightBound->GetFormID() == formID);
+                bool isLeftMatching = (leftBound && leftBound->GetFormID() == formID);
+
+                if ((isRightMatching && !isLeftMatching) || (!isRightMatching && isLeftMatching)) {
+                    if (auto* taskInterface = SKSE::GetTaskInterface()) {
+                        RE::FormID capturedFormID = formID;
+                        taskInterface->AddTask([capturedFormID]() {
+                            auto* deferredPlayer = RE::PlayerCharacter::GetSingleton();
+                            auto* deferredForm = RE::TESForm::LookupByID(capturedFormID);
+                            auto* equipManager = RE::ActorEquipManager::GetSingleton();
+                            if (!deferredPlayer || !deferredForm || !equipManager) {
+                                return;
+                            }
+
+                            // Re-check hand state
+                            auto currentRight = deferredPlayer->GetEquippedObject(false);
+                            auto currentLeft = deferredPlayer->GetEquippedObject(true);
+                            bool stillRightOnly = currentRight && currentRight->GetFormID() == capturedFormID &&
+                                !(currentLeft && currentLeft->GetFormID() == capturedFormID);
+                            bool stillLeftOnly = currentLeft && currentLeft->GetFormID() == capturedFormID &&
+                                !(currentRight && currentRight->GetFormID() == capturedFormID);
+                            if (!stillRightOnly && !stillLeftOnly) {
+                                return;
+                            }
+
+                            // Skyrim.esm slots : LeftHand = 0x13F42, RightHand = 0x13F43.
+                            static auto* leftSlot = RE::TESForm::LookupByID<RE::BGSEquipSlot>(0x13F42);
+                            static auto* rightSlot = RE::TESForm::LookupByID<RE::BGSEquipSlot>(0x13F43);
+
+                            if (auto spell = deferredForm->As<RE::SpellItem>()) {
+                                equipManager->EquipSpell(deferredPlayer, spell, leftSlot);
+                                equipManager->EquipSpell(deferredPlayer, spell, rightSlot);
+                            }
+                            else if (auto boundObj = deferredForm->As<RE::TESBoundObject>()) {
+                                equipManager->EquipObject(deferredPlayer, boundObj, nullptr, 1, leftSlot);
+                                equipManager->EquipObject(deferredPlayer, boundObj, nullptr, 1, rightSlot);
+                            }
+                            });
+                    }
+                }
+            }
+
+            return RE::BSEventNotifyControl::kContinue;
+        }
+    };
+
+    inline void Register()
+    {
+        if (auto holder = RE::ScriptEventSourceHolder::GetSingleton()) {
+            holder->AddEventSink(EquipEventHandler::GetSingleton());
+            SKSE::log::info("Dual Wield Memory event sink registered successfully!");
+        }
+    }
+}
 
 void OnDataLoaded()
 {
-   
+    FastDualEquip::Register();
 }
 
 void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
 {
-	switch (a_msg->type) {
-	case SKSE::MessagingInterface::kDataLoaded:
-        
-		break;
-	case SKSE::MessagingInterface::kPostLoad:
-		break;
-	case SKSE::MessagingInterface::kPreLoadGame:
-		break;
-	case SKSE::MessagingInterface::kPostLoadGame:
+    switch (a_msg->type) {
+    case SKSE::MessagingInterface::kDataLoaded:
+        OnDataLoaded();
         break;
-	case SKSE::MessagingInterface::kNewGame:
-		break;
-	}
+    case SKSE::MessagingInterface::kPostLoad:
+        break;
+    case SKSE::MessagingInterface::kPreLoadGame:
+        break;
+    case SKSE::MessagingInterface::kPostLoadGame:
+        break;
+    case SKSE::MessagingInterface::kNewGame:
+        break;
+    }
 }
 
-SKSEPluginLoad(const SKSE::LoadInterface *skse) {
+SKSEPluginLoad(const SKSE::LoadInterface* skse) {
     SKSE::Init(skse);
-	SetupLog();
-
+    SetupLog();
 
     auto messaging = SKSE::GetMessagingInterface();
-	if (!messaging->RegisterListener("SKSE", MessageHandler)) {
-		return false;
-	}
+    if (!messaging || !messaging->RegisterListener("SKSE", MessageHandler)) {
+        return false;
+    }
 
-	
     return true;
 }
