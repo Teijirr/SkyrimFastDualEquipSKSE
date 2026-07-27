@@ -1,6 +1,5 @@
 #include "log.h"
 #include <unordered_set>
-#include <SimpleIni.h>
 
 namespace FastDualEquip
 {
