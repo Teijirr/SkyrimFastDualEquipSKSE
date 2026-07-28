@@ -1,5 +1,8 @@
 #include "log.h"
 #include <unordered_set>
+#include <SimpleIni.h>
+
+static bool g_populateOnLoad = false;
 
 namespace FastDualEquip
 {
@@ -94,7 +97,6 @@ namespace FastDualEquip
 			else if (!rightBound && !leftBound)
 			{
 				g_dualEquippedForms.clear();
-				SKSE::log::info("Cleared dual-equipped forms.");
 			}
 
 			return RE::BSEventNotifyControl::kContinue;
@@ -115,6 +117,43 @@ void OnDataLoaded()
 	FastDualEquip::Register();
 }
 
+void PopulateFromFavorites()
+{
+	SKSE::GetTaskInterface()->AddTask([]() {
+		auto player = RE::PlayerCharacter::GetSingleton();
+		if (!player) {
+			return;
+		}
+
+		FastDualEquip::g_dualEquippedForms.clear();
+
+		// --- Weapons
+		auto inventory = player->GetInventory([](RE::TESBoundObject& a_obj) {
+			return a_obj.Is(RE::FormType::Weapon);
+		});
+
+		for (auto& [item, entryData] : inventory) {
+			auto& [count, entry] = entryData;
+			if (count <= 0 || !entry) {
+				continue;
+			}
+
+			if (entry->IsFavorited()) {
+				FastDualEquip::g_dualEquippedForms.insert(item->GetFormID());
+			}
+		}
+
+		// --- Spells
+		if (auto* magicFavorites = RE::MagicFavorites::GetSingleton()) {
+			for (auto* form : magicFavorites->spells) {
+				if (form && form->Is(RE::FormType::Spell)) {
+					FastDualEquip::g_dualEquippedForms.insert(form->GetFormID());
+				}
+			}
+		}
+	});
+}
+
 void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
 {
 	switch (a_msg->type) {
@@ -126,10 +165,26 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
 	case SKSE::MessagingInterface::kPreLoadGame:
 		break;
 	case SKSE::MessagingInterface::kPostLoadGame:
+		if (g_populateOnLoad)
+		{
+			PopulateFromFavorites();
+		}
 		break;
 	case SKSE::MessagingInterface::kNewGame:
 		break;
 	}
+}
+
+void LoadSettings()
+{
+	CSimpleIniA ini;
+	ini.SetUnicode();
+
+	const auto* plugin = SKSE::PluginDeclaration::GetSingleton();
+	const std::string path = std::string("Data/SKSE/Plugins/") + std::string(plugin->GetName()) + ".ini";
+	ini.LoadFile(path.c_str());
+
+	g_populateOnLoad = static_cast<bool>(ini.GetBoolValue("General", "bPopulateOnLoad", false));
 }
 
 SKSEPluginLoad(const SKSE::LoadInterface* skse) {
