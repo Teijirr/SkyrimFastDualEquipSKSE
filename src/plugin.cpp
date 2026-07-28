@@ -119,6 +119,8 @@ void OnDataLoaded()
 
 void PopulateFromFavorites()
 {
+	SKSE::log::info("Populating from favorites...");
+
 	SKSE::GetTaskInterface()->AddTask([]() {
 		auto player = RE::PlayerCharacter::GetSingleton();
 		if (!player) {
@@ -190,6 +192,7 @@ void LoadSettings()
 SKSEPluginLoad(const SKSE::LoadInterface* skse) {
 	SKSE::Init(skse);
 	SetupLog();
+	LoadSettings();
 
 	auto messaging = SKSE::GetMessagingInterface();
 	if (!messaging || !messaging->RegisterListener("SKSE", MessageHandler)) {
