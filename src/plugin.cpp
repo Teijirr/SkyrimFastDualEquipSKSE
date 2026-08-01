@@ -4,6 +4,10 @@
 
 static bool g_populateOnLoad = false;
 
+namespace {
+	std::atomic<bool> g_isAutoEquipping{ false };
+}
+
 namespace FastDualEquip
 {
 	inline std::unordered_set<RE::FormID> g_dualEquippedForms;
@@ -23,6 +27,11 @@ namespace FastDualEquip
 				return RE::BSEventNotifyControl::kContinue;
 			}
 
+			// Ignore our own event
+			if (g_isAutoEquipping) {
+				return RE::BSEventNotifyControl::kContinue;
+			}
+
 			auto player = RE::PlayerCharacter::GetSingleton();
 			if (!player) {
 				return RE::BSEventNotifyControl::kContinue;
@@ -33,7 +42,6 @@ namespace FastDualEquip
 				return RE::BSEventNotifyControl::kContinue;
 			}
 
-			// Get what's currently held in right (slot 0) and left (slot 1) hands
 			auto rightBound = player->GetEquippedObject(false);
 			auto leftBound = player->GetEquippedObject(true);
 
@@ -44,14 +52,11 @@ namespace FastDualEquip
 					return RE::BSEventNotifyControl::kContinue;
 				}
 
-				// If both hands now hold the same FormID, add it to the set
 				if (rightBound && leftBound && rightBound->GetFormID() == leftBound->GetFormID()) {
 					g_dualEquippedForms.insert(rightBound->GetFormID());
 				}
 
-				// If an item in our record is equipped and not yet dual-equipped
 				if (g_dualEquippedForms.contains(formID)) {
-
 					bool isRightMatching = (rightBound && rightBound->GetFormID() == formID);
 					bool isLeftMatching = (leftBound && leftBound->GetFormID() == formID);
 
@@ -66,7 +71,6 @@ namespace FastDualEquip
 									return;
 								}
 
-								// Re-check hand state
 								auto currentRight = deferredPlayer->GetEquippedObject(false);
 								auto currentLeft = deferredPlayer->GetEquippedObject(true);
 								bool stillRightOnly = currentRight && currentRight->GetFormID() == capturedFormID &&
@@ -77,25 +81,29 @@ namespace FastDualEquip
 									return;
 								}
 
-								// Skyrim.esm slots : LeftHand = 0x13F42, RightHand = 0x13F43.
-								static auto* leftSlot = RE::TESForm::LookupByID<RE::BGSEquipSlot>(0x13F42);
-								static auto* rightSlot = RE::TESForm::LookupByID<RE::BGSEquipSlot>(0x13F43);
+								auto* leftSlot = RE::TESForm::LookupByID<RE::BGSEquipSlot>(0x13F43);
+								auto* rightSlot = RE::TESForm::LookupByID<RE::BGSEquipSlot>(0x13F42);
+								auto* slotToEquip = stillRightOnly ? leftSlot : rightSlot;
+
+								g_isAutoEquipping = true;
 
 								if (auto spell = deferredForm->As<RE::SpellItem>()) {
-									equipManager->EquipSpell(deferredPlayer, spell, leftSlot);
-									equipManager->EquipSpell(deferredPlayer, spell, rightSlot);
+									//SKSE::log::info("Equipping spell: {} on slot {}", spell->GetName(), slotToEquip == leftSlot ? "Left" : "Right");
+									equipManager->EquipSpell(deferredPlayer, spell, slotToEquip);
 								}
 								else if (auto boundObj = deferredForm->As<RE::TESBoundObject>()) {
-									equipManager->EquipObject(deferredPlayer, boundObj, nullptr, 1, leftSlot);
-									equipManager->EquipObject(deferredPlayer, boundObj, nullptr, 1, rightSlot);
+									//SKSE::log::info("Equipping object: {} on slot {}", boundObj->GetName(), slotToEquip == leftSlot ? "Left" : "Right");
+									equipManager->EquipObject(deferredPlayer, boundObj, nullptr, 1, slotToEquip);
 								}
+
+								g_isAutoEquipping = false;
 							});
 						}
 					}
 				}
 			}
-			else if (!rightBound && !leftBound)
-			{
+			else if (!rightBound && !leftBound) {
+				//SKSE::log::info("Clear!");
 				g_dualEquippedForms.clear();
 			}
 
